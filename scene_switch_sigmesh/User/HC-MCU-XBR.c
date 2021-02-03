@@ -1,6 +1,6 @@
 #define ALLOCATE_EXTERN
 #include "HC89S003F4.h"
-#include "zigbee.h"
+#include "bluetooth.h"
 
 volatile ulong Timer_Counter = 0;
 
@@ -13,6 +13,7 @@ void Flash_EraseBlock(unsigned int fui_Address); //扇区擦除
 void FLASH_WriteData(unsigned char fuc_SaveData, unsigned int fui_Address);
 void Delay_ms(unsigned int t);
 void Delay_us(unsigned int q1);
+void send_data(u8 d);
 
 void Delay_ms(unsigned int t)
 {
@@ -144,7 +145,7 @@ void send_data(u8 d)
 ***************************************************************************************/
 void main()
 {
-	zigbee_protocol_init(); //mcu_sdk
+	bt_protocol_init(); //mcu_sdk
 	InitSYS();
 	Timer_Init();
 	UART1_Init();
@@ -159,12 +160,12 @@ void main()
 	upload_disable = 0;
 	mcu_network_start();
 	
-	my_memset(&ota_fw_info, 0, sizeof(ota_fw_info));
+	//my_memset(&ota_fw_info, 0, sizeof(ota_fw_info));
 	while (1)
 	{
 		WDTC |= 0x10; //清看门狗
 		Delay_ms(2);
-		zigbee_uart_service();
+		bt_uart_service();
 		
 		if (second_flag)
 		{

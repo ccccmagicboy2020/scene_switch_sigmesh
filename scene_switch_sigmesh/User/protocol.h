@@ -1,88 +1,96 @@
-/**
-* @file  protocol.h
-* @brief declaration of fuction in  protocol.c
-* @author luchao
-* @date 2020.03.13
-* @par email:
-* luchao@tuya.com
-* @copyright HANGZHOU TUYA INFORMATION TECHNOLOGY CO.,LTD
-* @par company
-* http://www.tuya.com
-*/
+/****************************************Copyright (c)*************************
+**                               版权所有 (C), 2015-2017, 涂鸦科技
+**
+**                                 http://www.tuya.com
+**
+**--------------文件信息-------------------------------------------------------
+**文   件   名: protocol.h
+**描        述: 下发/上报数据处理函数
+**使 用 说 明 :
+
+                  *******非常重要，一定要看哦！！！********
+
+** 1、用户在此文件中实现数据下发/上报功能
+** 2、DP的ID/TYPE及数据处理函数都需要用户按照实际定义实现
+** 3、当开始某些宏定义后需要用户实现代码的函数内部有#err提示,完成函数后请删除该#err
+**
+**--------------当前版本修订---------------------------------------------------
+** 版  本: v1.0
+** 日　期: 2017年5月3日
+** 描　述: 1:创建涂鸦bluetooth对接MCU_SDK
+**
+**-----------------------------------------------------------------------------
+******************************************************************************/
 #ifndef __PROTOCOL_H_
 #define __PROTOCOL_H_
 
-#ifdef __cplusplus
-extern "C"
-{
+
+
+/******************************************************************************
+                            用户相关信息配置
+******************************************************************************/
+/******************************************************************************
+                            1:修改产品信息                
+******************************************************************************/
+#define PRODUCT_KEY "x8kr2czt"    //开发平台创建产品后生成的16位字符产品唯一标识
+
+
+#define MCU_VER "1.0.0"                                 //用户的软件版本,用于MCU固件升级,MCU升级版本需修改
+/******************************************************************************
+                          2:MCU是否需要支固件升级                  
+如需要支持MCU固件升级,请开启该宏
+MCU可调用mcu_api.c文件内的mcu_firm_update_query()函数获取当前MCU固件更新情况
+                        ********WARNING!!!**********
+当前接收缓冲区为关闭固件更新功能的大小,固件升级包为256字节
+如需要开启该功能,串口接收缓冲区会变大
+******************************************************************************/
+//#define         SUPPORT_MCU_FIRM_UPDATE                 //开启MCU固件升级功能(默认关闭)
+/******************************************************************************
+                         3:定义收发缓存:
+                    如当前使用MCU的RAM不够,可修改为24
+******************************************************************************/
+#ifndef SUPPORT_MCU_FIRM_UPDATE
+#define BT_UART_QUEUE_LMT             16              //数据接收队列大小,如MCU的RAM不够,可缩小
+#define BT_UART_RECV_BUF_LMT          24              //根据用户DP数据大小量定,必须大于24
+#else
+#define BT_UART_QUEUE_LMT             128             //数据接收队列大小,如MCU的RAM不够,可缩小
+#define BT_UART_RECV_BUF_LMT          300             //固件升级缓冲区,需大缓存,必须大于260
 #endif
 
-///< product INFORMATION
+#define BT_UART_SEND_BUF_LMT         24              //根据用户DP数据大小量定,必须大于24
+/******************************************************************************
+                        4:定义模块工作方式
+模块自处理:
+          bt指示灯和bt复位按钮接在bt模块上(开启BT_CONTROL_SELF_MODE宏)
+          并正确定义BT_STATE_KEY和BT_RESET_KEY
+MCU自处理:
+          bt指示灯和bt复位按钮接在MCU上(关闭BT_CONTROL_SELF_MODE宏)
+          MCU在需要处理复位bt的地方调用mcu_api.c文件内的mcu_reset_bt()函数,并可调用mcu_get_reset_bt_flag()函数返回复位bt结果
+          或调用设置bt模式mcu_api.c文件内的mcu_set_bt_mode(BT_CONFIG_E mode)函数,并可调用mcu_get_bt_work_state()函数返回设置bt结果
+******************************************************************************/
+//#define         BT_CONTROL_SELF_MODE                       //bt自处理按键及LED指示灯;如为MCU外界按键/LED指示灯请关闭该宏
+#ifdef          BT_CONTROL_SELF_MODE                      //模块自处理
+  #define     BT_STATE_KEY            14                    //bt模块状态指示按键，请根据实际GPIO管脚设置
+  #define     BT_RESERT_KEY           0                     //bt模块重置按键，请根据实际GPIO管脚设置
+#endif
 
-#define PRODUCT_KEY "bttqbchl"    //开发平台创建产品后生成的16位字符产品唯一标识
+/******************************************************************************
+                      5:MCU是否需要支持校时功能                     
+如需要请开启该宏,并在Protocol.c文件内mcu_write_rtctime实现代码
+mcu_write_rtctime内部有#err提示,完成函数后请删除该#err
+mcu在bt模块正确联网后可调用mcu_get_system_time()函数发起校时功能
+******************************************************************************/
+#define         SUPPORT_MCU_RTC_CHECK                //开启校时功能
 
-
-///< mcu version 
-#define MCU_VER "1.0.0"                          
- 
-#define ZIGBEE_UART_QUEUE_LMT             64             // using to save data received from uart
-#define ZIGBEE_UART_RECV_BUF_LMT          64             //
-#define ZIGBEE_UART_SEND_BUF_LMT          32             //
-
-
-typedef enum
-{
-    MCU_TYPE_DC_POWER = 1,
-    MCU_TYPE_LOWER_POWER,
-    MCU_TYPE_SCENE
-}xdata MCU_TYPE_E;
-
-/**
- * if mcu need to support the time function, this macro definition should be opened
- * and need complete mcu_write_rtctime function 
- * 
- */
- 
-//#define    SUPPORT_MCU_RTC_CHECK             //start time calibration
-
-/**
- * if mcu need to support OTA, this macro definition should be opened
- */
-#define    SUPPORT_MCU_OTA                  //support mcu ota
-
-
-/**
- * if mcu need to support mcu type checking, this macro definition should be opened
- * 
- */
-//#define    CHECK_MCU_TYPE               //support mcu type check 
-
-
-/**
- * if mcu need to support zigbee network parameter setting, this macro definition should be opened
- * 
- */
-//#define  SET_ZIGBEE_NWK_PARAMETER        //support zigbee nwk parameter setting 
-
-
-/**
- * if mcu need to send a broadcast data, this macro definition should be opened
- * 
- */
-//#define  BROADCAST_DATA_SEND           //support broadcast data sending
-
-
-
-/**
- * DP data list,this code will be generate by cloud platforms
- */
-
+/******************************************************************************
+                        1:dp数据点序列号重新定义
+          **此为自动生成代码,如在开发平台有相关修改请重新下载MCU_SDK**         
+******************************************************************************/
 //工厂操作(可下发可上报)
-//备注:工厂操作菜单
+//备注:aa,bb,cc,dd,ee,ff,gg,hh
 #define DPID_FACTORY_OP 150
-//计数器 (只上报)
-//备注:自由计数器
-//
+//计数器(只上报)
+//备注:
 #define DPID_FREE_TIMER 151
 //故障上报(只上报)
 //备注:
@@ -91,88 +99,53 @@ typedef enum
 //备注:
 #define DPID_STRING_REPORT 153
 //OTA结果(可下发可上报)
-//备注:ota结果
+//备注:ok, fail, fail_status, fail_pid, fail_ver, fail_sum, fail_offset, start, not_include
 #define DPID_OTA_RESULT 154
 
 
 
-/**
-* @brief encapsulates a generic send function, developer should use their own function to completing this fuction 
-* @param[in] {value} send signle data 
-* @return  void
-*/
-void uart_transmit_output(unsigned char value);
-
-/**
-* @brief Upload all dp information of the system, and realize the synchronization of APP and muc data
-* @param[in] {void}
-* @return  void
-*/
+/*****************************************************************************
+函数名称 : all_data_update
+功能描述 : 系统所有dp点信息上传
+输入参数 : 无
+返回参数 : 无
+使用说明 : MCU必须实现该函数内数据上报功能
+*****************************************************************************/
 void all_data_update(void);
 
-/**
-* @brief mcu check local RTC time 
-* @param[in] {time} timestamp
-* @return  void
-*/
-void mcu_write_rtctime(unsigned char time[]);
+#ifdef SUPPORT_MCU_FIRM_UPDATE
+/*****************************************************************************
+函数名称 : mcu_firm_update_handle
+功能描述 : MCU进入固件升级模式
+输入参数 : value:固件缓冲区
+           position:当前数据包在于固件位置
+           length:当前固件包长度(固件包长度为0时,表示固件包发送完成)
+返回参数 : 无
+使用说明 : MCU需要自行实现该功能
+*****************************************************************************/
+unsigned char mcu_firm_update_handle(const unsigned char value[],unsigned long position,unsigned short length);
+#endif
 
-/**
-* @brief Zigbee functional test feedback
-* @param[in] {void} 
-* @return  void
-*/
-//void zigbee_test_result(void);
-
-/**
-* @brief this function will handle uart received frame data  
-* @param[in] {dpid}   dp id
-* @param[in] {value}  dp data 
-* @param[in] {length} lenght of dp data 
-* @return  handle result 
-*/
+/*****************************************************************************
+函数名称 : dp_download_handle
+功能描述 : dp下发处理函数
+输入参数 : dpid:DP序号
+value:dp数据缓冲区地址
+length:dp数据长度
+返回参数 : 成功返回:SUCCESS/失败返回:ERRO
+使用说明 : 该函数用户不能修改
+*****************************************************************************/
 unsigned char dp_download_handle(unsigned char dpid,const unsigned char value[], unsigned short length);
-
-/**
-* @brief get received cmd total number
-* @param[in] {void}   
-* @return  received cmd total number
-*/
+/*****************************************************************************
+函数名称 : get_download_cmd_total
+功能描述 : 获取所有dp命令总和
+输入参数 : 无
+返回参数 : 下发命令总和
+使用说明 : 该函数用户不能修改
+*****************************************************************************/
 unsigned char get_download_cmd_total(void);
 
-/**
-* @brief received zigbee net_work state handle 
-* @param[in] {zigbee_work_state}  zigbee current network state
-* @return  void 
-*/
-void zigbee_work_state_event(unsigned char zigbee_work_state);
-/**
-* @brief received reset zigbee response 
-* @param[in] {state} response state 
-* @return  void 
-*/
-void mcu_reset_zigbee_event(unsigned char state);
 
-/**
-* @brief check mcu version response
-* @param[in] {void}
-* @return  void 
-*/
-void response_mcu_ota_version_event(void);
 
-void soft_reset_mcu(void);
-void go_bootloader_ota(void);
-void tuya_re_config_network(void);
-void tuya_reset_module(void);
-void tuya_retry_ota(void);
-void reset_default_parameter(void);
-
-void IAR_Soft_Rst_No_Option(void);
-void IAR_Soft_Rst_Option(void);
-
-void clear_timer(void);
-
-#ifdef __cplusplus
-}
 #endif
-#endif
+
