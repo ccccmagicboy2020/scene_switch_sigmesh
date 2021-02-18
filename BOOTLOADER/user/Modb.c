@@ -8,11 +8,12 @@ volatile ulong	HandShake_Count=0;
 
 extern unsigned char xdata guc_Read_a[2];
 extern unsigned char guc_Read_a1[20];
-extern unsigned char xdata tick_lo;
-extern unsigned char xdata tick_hi;
 extern unsigned char xdata Uart_Buf[150];
 extern unsigned char xdata Uart_send_Buf[30];
-_ota_mcu_fw xdata ota_fw_info;
+
+unsigned int firm_length = 0;
+unsigned char firm_update_flag = 0;
+
 unsigned int fw_file_sum = 0;
 short ota_packet_total_num = 0;
 short ota_packet_current_num = 0;
@@ -291,52 +292,45 @@ unsigned char Receive_Packet_tuya(unsigned char *Data)
 	unsigned char num_hi;
 	unsigned char i;
 	unsigned char sum = 0;
+	unsigned short total_len;
 
 	if (Uart_RecvByte(Data,  Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
-	if (FIRST_FRAME_HEAD == Data[0])
+	if (FIRST_FRAME_HEAD == Data[HEAD_FIRST])
 	{
-		if (Uart_RecvByte(Data+1,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
-		if (SECOND_FRAME_HEAD == Data[1])
+		if (Uart_RecvByte(Data+HEAD_SECOND,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
+		if (SECOND_FRAME_HEAD == Data[HEAD_SECOND])
 		{
-			if (Uart_RecvByte(Data+2,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
-			if (SERIAL_PROTOCOL_VER == Data[2])
+			if (Uart_RecvByte(Data+PROTOCOL_VERSION,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
+			if (SERIAL_PROTOCOL_VER == Data[PROTOCOL_VERSION])
 			{
-				if (Uart_RecvByte(Data+3,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
-				tick_hi = Data[3];
-				if (Uart_RecvByte(Data+4,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
-				tick_lo = Data[4];
-				if (Uart_RecvByte(Data+5,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
-				command_byte = Data[5];
-				if (Uart_RecvByte(Data+6,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
-				num_hi = Data[6];
-				if (Uart_RecvByte(Data+7,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
-				num_lo = Data[7];
-				for (i = 0; i < num_lo; i++)
+				if (Uart_RecvByte(Data+FRAME_TYPE,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
+				command_byte = Data[FRAME_TYPE];
+				if (Uart_RecvByte(Data+LENGTH_HIGH,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
+				num_hi = Data[LENGTH_HIGH];
+				if (Uart_RecvByte(Data+LENGTH_LOW,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
+				num_lo = Data[LENGTH_LOW];
+
+				total_len = num_hi * 0x100;
+				total_len += num_lo;
+				
+				for (i = 0; i < total_len; i++)
 				{
-					if (Uart_RecvByte(Data+8+i,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
+					if (Uart_RecvByte(Data+DATA_START+i,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
 				}
-				if (Uart_RecvByte(Data+PROTOCOL_HEAD+num_lo-1,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
+				if (Uart_RecvByte(Data+PROTOCOL_HEAD+total_len-1,Command_TIMEOUT_tuya)!= SUCCESS)   return NACK_TIME;
 
-				sum = get_check_sum(Data, PROTOCOL_HEAD+num_lo-1);
+				sum = get_check_sum(Data, PROTOCOL_HEAD+total_len-1);
 
-				if (Data[PROTOCOL_HEAD+num_lo-1] == sum)
+				if (Data[PROTOCOL_HEAD+total_len-1] == sum)
 				{
 					switch (command_byte)
 					{
-					case MCU_OTA_VERSION_CMD:
-						response_mcu_ota_version_event(ota_fw_info.mcu_ota_ver);
-						return	SUCCESS;
-						break;
-					case MCU_OTA_NOTIFY_CMD:
+					case UPDATE_START_CMD:
 						response_mcu_ota_notify_event();
 						return	SUCCESS;
 						break;
-					case MCU_OTA_DATA_REQUEST_CMD:
-						mcu_ota_fw_req_cv();
-						return	SUCCESS;
-						break;
-					case MCU_OTA_RESULT_CMD:
-						mcu_ota_result_event();
+					case UPDATE_TRANS_CMD:
+						mcu_ota_fw_request_event();
 						return	SUCCESS;
 						break;
 					case DATA_REPORT_CMD:
@@ -381,11 +375,11 @@ void read_ota_struct(void)
 			Uart_Buf[DATA_START + i] = guc_Read_a1[i];								//ota struct
 			i++;
 		}
-		response_mcu_ota_notify_event();		
+		response_mcu_ota_notify_event();
 	}
 	else
 	{
-		response_mcu_ota_version_event(0x40);
+		//
 	}
 }
 
@@ -445,13 +439,6 @@ unsigned char get_check_sum(unsigned char *pack, unsigned short pack_len)
   return check_sum;
 }
 
-void response_mcu_ota_version_event(unsigned char ver)
-{
-	unsigned short length = 0;
-	length = set_zigbee_uart_byte(length, ver);
-	zigbee_uart_write_frame(MCU_OTA_VERSION_CMD,length, tick_hi, tick_lo);
-}
-
 int strcmp_barry(unsigned char *str1,unsigned char *str2)
 {
    int ret=0;
@@ -474,83 +461,17 @@ void response_mcu_ota_notify_event(void)
 	unsigned char key = 0;
 	unsigned char pid_ota_string[9] = "";
 	
-	i = 0;
-	while(i<8){
-		ota_fw_info.mcu_ota_pid[i] = Uart_Buf[DATA_START + i];								//ota fw PID
-		pid_ota_string[i] = Uart_Buf[DATA_START + i];
-		i++;
-	}
+	firm_length = Uart_Buf[DATA_START] << 24 | \
+								Uart_Buf[DATA_START + 1] << 16 | \
+								Uart_Buf[DATA_START + 2] << 8 | \
+								Uart_Buf[DATA_START + 3];								//ota fw size
 	
-	pid_ota_string[8] = '\0';
-	
-	ota_fw_info.mcu_ota_ver = Uart_Buf[DATA_START + 8];											//ota fw version
-	ota_fw_info.mcu_ota_fw_size = Uart_Buf[DATA_START + 9] << 24 | \
-																Uart_Buf[DATA_START + 10] << 16 | \
-																Uart_Buf[DATA_START + 11] << 8 | \
-																Uart_Buf[DATA_START + 12];								//ota fw size
-	ota_fw_info.mcu_ota_checksum = Uart_Buf[DATA_START + 13] << 24 | \
-																 Uart_Buf[DATA_START + 14] << 16 | \
-																 Uart_Buf[DATA_START + 15] << 8 | \
-																 Uart_Buf[DATA_START + 16];							//ota fw checksum
-	
-	if (
-		!strcmp_barry(pid_ota_string, (unsigned char*)PRODUCT_KEY0) || 
-		!strcmp_barry(pid_ota_string, (unsigned char*)PRODUCT_KEY1) ||	
-		!strcmp_barry(pid_ota_string, (unsigned char*)PRODUCT_KEY2) || 
-		!strcmp_barry(pid_ota_string, (unsigned char*)PRODUCT_KEY3)
-	)
-	{
-		key = 1;
-	}
-	else
-	{
-		key = 0;
-	}
-	
-	if((key &&\
-		ota_fw_info.mcu_ota_ver > 0x00 &&\
-		ota_fw_info.mcu_ota_fw_size > 0)	
-		){		//check fw pid and fw version and fw size
-		result = 0x00;	//OK
-		ota_fw_info.mcu_current_offset = 0x00;
-		ota_packet_total_num = ota_fw_info.mcu_ota_fw_size / FW_SINGLE_PACKET_SIZE;
-		ota_last_packet_size = ota_fw_info.mcu_ota_fw_size % FW_SINGLE_PACKET_SIZE;
-		ota_packet_current_num = 0;
-		fw_file_sum = 0;
-		Earse_Flash();
-		set_magic_flag(1);
-		led_speed = 500;
-	}
-	else{
-		result = 0x01;	//error
-	}
-  
-	length = set_zigbee_uart_byte(length,result);
-	zigbee_uart_write_frame(MCU_OTA_NOTIFY_CMD,length, tick_hi, tick_lo);
-	
-	if (0x00 == result)
-	{
-		mcu_ota_fw_request();
-	}
-	else if (0x01 == result)
-	{
-		send_ota_result_dp(0x07);
-		mcu_ota_result_report(0x01);
-	}
-}
-
-void mcu_ota_result_event(void)
-{
-	unsigned char status = Uart_Buf[DATA_START];
-	
-	if(status == 0x00)
-	{
-		//ok
-	}
-	else if(status == 0x01)
-	{
-		//fail
-	}
+	length = set_bt_uart_byte(length, 0x00);	//256bytes
+	bt_uart_write_frame(UPDATE_START_CMD, length);
+	firm_update_flag = UPDATE_START_CMD;
+	Earse_Flash();
+	set_magic_flag(1);
+	led_speed = 500;
 }
 //rev
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -637,57 +558,6 @@ unsigned char mcu_ota_fw_request_event(void)
 }
 
 //主动发
-void mcu_ota_fw_request(void)
-{
-	unsigned short length = 0;	
-	unsigned char i = 0;
-	unsigned char pack_size = 0;
-
-	if(ota_fw_info.mcu_current_offset >= ota_fw_info.mcu_ota_fw_size)   //outside the boarder
-	{
-		return;
-	}
-	else
-	{
-		//here
-		if (ota_packet_current_num < ota_packet_total_num)
-		{
-			pack_size = FW_SINGLE_PACKET_SIZE;
-		}
-		else
-		{
-			pack_size = ota_last_packet_size;
-		}
-	}
-
-	while(i < 8){
-		length = set_zigbee_uart_byte(length,ota_fw_info.mcu_ota_pid[i]); //ota fw pid
-		i++;
-	}
-	length = set_zigbee_uart_byte(length,ota_fw_info.mcu_ota_ver);		//ota fw version
-	i = 0;
-	while(i < 4){
-		length = set_zigbee_uart_byte(length , ota_fw_info.mcu_current_offset >> (24 - i * 8));	//pakage offset request
-		i++;
-	}
-	length = set_zigbee_uart_byte(length, pack_size);	// packet size request
-	
-	zigbee_uart_write_frame(MCU_OTA_DATA_REQUEST_CMD,length, 0x00, 0x00);
-}
-
-void send_ota_result_dp(unsigned char status)
-{
-	unsigned short length = 0;	
-	//9A 04 00 01 00
-	length = set_zigbee_uart_byte(length, DPID_OTA_RESULT);
-	length = set_zigbee_uart_byte(length, DP_TYPE_ENUM);
-	length = set_zigbee_uart_byte(length, 0x00);
-	length = set_zigbee_uart_byte(length, 0x01);
-	length = set_zigbee_uart_byte(length, status);
-	zigbee_uart_write_frame(DATA_REPORT_CMD, length, 0x00, 0x00);
-}
-
-//主动发
 void mcu_ota_result_report(unsigned char status)
 {
 	unsigned short length = 0;
@@ -735,16 +605,13 @@ void my_memset(void *src, unsigned short count)
   }
 }
 
-void zigbee_uart_write_frame(unsigned char fr_cmd, unsigned short len, unsigned char seq_hi, unsigned char seq_lo)
+void bt_uart_write_frame(unsigned char fr_cmd, unsigned short len)
 {
   unsigned char check_sum = 0;
 	
   Uart_send_Buf[HEAD_FIRST] = FIRST_FRAME_HEAD;
   Uart_send_Buf[HEAD_SECOND] = SECOND_FRAME_HEAD;
   Uart_send_Buf[PROTOCOL_VERSION] = SERIAL_PROTOCOL_VER;
-	
-  Uart_send_Buf[SEQ_HIGH] = seq_hi;
-  Uart_send_Buf[SEQ_LOW] = seq_lo;
 
   Uart_send_Buf[FRAME_TYPE] = fr_cmd;
   Uart_send_Buf[LENGTH_HIGH] = len >> 8;
@@ -758,7 +625,7 @@ void zigbee_uart_write_frame(unsigned char fr_cmd, unsigned short len, unsigned 
   Uart_SendPacket((unsigned char *)Uart_send_Buf, len);
 }
 
-unsigned short set_zigbee_uart_byte(unsigned short dest, unsigned char byte)
+unsigned short set_bt_uart_byte(unsigned short dest, unsigned char byte)
 {
   unsigned char *obj = (unsigned char *)Uart_send_Buf + DATA_START + dest;
 	
@@ -767,14 +634,6 @@ unsigned short set_zigbee_uart_byte(unsigned short dest, unsigned char byte)
   
   return dest;
 }
-
-//void mcu_reset_zigbee(unsigned char network)
-//{
-//  unsigned short length = 0;
-
-//  length = set_zigbee_uart_byte(length,network);
-//  zigbee_uart_write_frame(ZIGBEE_CFG_CMD, length, 0x00, 0x00);
-//}
 
 void enable_timer(unsigned char en)
 {

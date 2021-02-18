@@ -3,13 +3,11 @@
 
 //#define HOLYCHIP
 
-unsigned char xdata Uart_Buf[200];//数据缓存数组 rev buffer
+unsigned char xdata Uart_Buf[270];//数据缓存数组 rev buffer
 unsigned char xdata Uart_send_Buf[30];//send buffer
 unsigned char xdata magic_flag = 0;
 unsigned char xdata guc_Read_a[2] = {0x00}; //用于存放读取的数据
 unsigned char guc_Read_a1[20] = {0x00}; //用于存放读取的数据
-unsigned char xdata tick_lo;
-unsigned char xdata tick_hi;
 extern short ota_packet_total_num;
 extern short ota_packet_current_num;
 extern unsigned short led_speed;
